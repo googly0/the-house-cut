@@ -64,6 +64,11 @@ export type HandRecord = {
   board: string[];
   actions: HandAction[];
   pots: PotResult[];
+  /**
+   * What each player put into this hand (after any uncalled bet came back).
+   * Empty = not tracked for this hand. Winners' net = award − their own contribution.
+   */
+  contributions: Record<string, number>;
 };
 
 export type Session = {
@@ -174,6 +179,48 @@ export function handPotTotal(hand: HandRecord): number | null {
 
 export function hostTotal(session: Session) {
   return session.hands.reduce((sum, hand) => sum + hand.fee, 0);
+}
+
+export function handPaidTotal(hand: HandRecord) {
+  return Object.values(hand.contributions).reduce((sum, v) => sum + v, 0);
+}
+
+export type TrackedResult = {
+  paid: number;
+  won: number;
+  /** won − paid across hands where money was tracked. */
+  net: number;
+  /** Chips they should have now: buy-ins + net. */
+  stack: number;
+};
+
+/**
+ * Hand-by-hand running results. Only hands with contributions recorded move
+ * money; a hand with a winner but no "who paid in" is counted in `untracked`.
+ */
+export function trackedResults(session: Session): { byPlayer: Record<string, TrackedResult>; untracked: number } {
+  const byPlayer: Record<string, TrackedResult> = {};
+  for (const p of session.players) byPlayer[p.id] = { paid: 0, won: 0, net: 0, stack: totalBuyIns(p) };
+  let untracked = 0;
+  for (const hand of session.hands) {
+    if (!Object.keys(hand.contributions).length) {
+      if (hand.pots.some((pot) => pot.awards.length)) untracked++;
+      continue;
+    }
+    for (const [id, amount] of Object.entries(hand.contributions)) {
+      if (byPlayer[id]) byPlayer[id].paid += amount;
+    }
+    for (const pot of hand.pots) {
+      for (const award of pot.awards) {
+        if (byPlayer[award.playerId]) byPlayer[award.playerId].won += award.amount ?? 0;
+      }
+    }
+  }
+  for (const r of Object.values(byPlayer)) {
+    r.net = r.won - r.paid;
+    r.stack += r.net;
+  }
+  return { byPlayer, untracked };
 }
 
 export function handWinnerIds(hand: HandRecord): string[] {
@@ -612,7 +659,18 @@ function normalizeHand(value: Record<string, unknown>, index: number, defaultFee
       ? (value.actions as Record<string, unknown>[]).map(normalizeAction).filter((a): a is HandAction => a !== null)
       : [],
     pots,
+    contributions: normalizeContributions(value.contributions),
   };
+}
+
+function normalizeContributions(value: unknown): Record<string, number> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  const out: Record<string, number> = {};
+  for (const [id, amount] of Object.entries(value as Record<string, unknown>)) {
+    const n = num(amount);
+    if (n !== null && n > 0) out[id] = Math.round(n);
+  }
+  return out;
 }
 
 export function normalizeSessions(value: unknown): Session[] {

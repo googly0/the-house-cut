@@ -103,6 +103,11 @@ export function PokerHandEditor({
   const [openBoard, setOpenBoard] = useState(Boolean(initial?.board.length));
   const [openActions, setOpenActions] = useState(Boolean(initial?.actions.length));
   const [error, setError] = useState("");
+  const [paid, setPaid] = useState<Record<string, string>>(() =>
+    initial && !initial.actions.length ? Object.fromEntries(Object.entries(initial.contributions).map(([k, v]) => [k, String(v)])) : {},
+  );
+  const [potTouched, setPotTouched] = useState(Boolean(initial));
+  const [sameFor, setSameFor] = useState("");
 
   const fee = chargeFee ? (initial && initial.fee > 0 ? initial.fee : session.feePerHand) : 0;
   const showBoard = session.gameVariant !== "Seven-card stud";
@@ -118,6 +123,26 @@ export function PokerHandEditor({
   const issueById = new Map(replay.issues.map((i) => [i.actionId, i.message]));
   const computed = actions.length ? buildPots(replay.contributions, replay.folded) : null;
   const { sb, bb } = blindSeats(ctx);
+
+  // Money in: from betting actions when logged (minus any uncalled bet), else typed.
+  const actionPaid: Record<string, number> | null = computed
+    ? (() => {
+        const c = { ...replay.contributions };
+        if (computed.returned) c[computed.returned.playerId] -= computed.returned.amount;
+        return c;
+      })()
+    : null;
+  const paidMap: Record<string, number> = actionPaid ?? Object.fromEntries(dealtIn.map((id) => [id, Number(paid[id]) || 0]));
+  const paidTotal = Object.values(paidMap).reduce((a, b) => a + b, 0);
+
+  const applyPaid = (next: Record<string, string>) => {
+    setPaid(next);
+    setError("");
+    if (!potTouched && pots.length === 1) {
+      const total = dealtIn.reduce((sum, id) => sum + (Number(next[id]) || 0), 0);
+      setPots((current) => current.map((pot, i) => (i === 0 ? { ...pot, amount: total ? String(total) : "" } : pot)));
+    }
+  };
 
   const updatePot = (id: string, updater: (pot: DraftPot) => DraftPot) => {
     setPots((current) => current.map((pot) => (pot.id === id ? updater(pot) : pot)));
@@ -140,6 +165,7 @@ export function PokerHandEditor({
 
   const applyComputedPots = () => {
     if (!computed) return;
+    setPotTouched(true);
     setPots((current) =>
       computed.pots.map((cp, i) => {
         const previous = current[i];
@@ -161,16 +187,29 @@ export function PokerHandEditor({
   };
 
   const save = () => {
-    const mismatch = pots.findIndex((pot, i) => customMismatch(pot, i === 0 ? fee : 0) !== null);
-    if (mismatch >= 0) {
-      setError(`${pots[mismatch].label}: custom shares must add up to the amount being paid out.`);
+    let draftPots = pots;
+    const typedTotal = pots.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    const anyTyped = pots.some((p) => p.amount.trim() !== "");
+    if (paidTotal > 0 && !anyTyped) {
+      if (pots.length > 1) { setError("Enter each pot's amount — with side pots I can't guess the split."); return; }
+      draftPots = pots.map((p, i) => (i === 0 ? { ...p, amount: String(paidTotal) } : p));
+    } else if (paidTotal > 0 && typedTotal !== paidTotal) {
+      setError(`Players put in ${inr(paidTotal)} but the pot${pots.length > 1 ? "s add" : " says"} ${inr(typedTotal)}. Fix one of them.`);
       return;
     }
-    if (pots[0] && payable(pots[0], 0) !== null && Number(pots[0].amount) < fee) {
+    const winnersPicked = draftPots.some((p) => p.winnerIds.length);
+    if (paidTotal > 0 && !winnersPicked) { setError("Money went in, so pick who won it."); return; }
+    const pots_ = draftPots;
+    const mismatch = pots_.findIndex((pot, i) => customMismatch(pot, i === 0 ? fee : 0) !== null);
+    if (mismatch >= 0) {
+      setError(`${pots_[mismatch].label}: custom shares must add up to the amount being paid out.`);
+      return;
+    }
+    if (pots_[0] && payable(pots_[0], 0) !== null && Number(pots_[0].amount) < fee) {
       setError(`Main pot is smaller than the ${inr(fee)} fee. Turn the fee off for this hand or fix the amount.`);
       return;
     }
-    const results: PotResult[] = pots
+    const results: PotResult[] = pots_
       .filter((pot, i) => i === 0 || pot.amount.trim() !== "" || pot.winnerIds.length)
       .map((pot, i) => {
         const s = shares(pot, i === 0 ? fee : 0, seatOrder);
@@ -193,11 +232,15 @@ export function PokerHandEditor({
       board: showBoard ? board : [],
       actions,
       pots: results,
+      contributions: Object.fromEntries(Object.entries(paidMap).filter(([id, v]) => v > 0 && dealtIn.includes(id))),
     });
     if (!initial) {
       setBoard([]);
       setActions([]);
       setPots([createPot("Main pot")]);
+      setPaid({});
+      setPotTouched(false);
+      setSameFor("");
       setNote("");
       setChargeFee(session.feePerHand > 0);
       setDealerId(nextDealerIdAfter(dealerId));
@@ -247,6 +290,43 @@ export function PokerHandEditor({
         </p>
       ) : null}
 
+      {/* Money in */}
+      <div className="space-y-2" data-testid="panel-paid-in">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <div className="eyebrow">Who put money in?</div>
+            <p className="mt-0.5 text-xs text-[hsl(var(--muted-foreground))]">
+              {actionPaid ? "Worked out from the betting actions below." : "What each player put in this hand, winner included. Leave blank if they folded without paying."}
+            </p>
+          </div>
+          {!actionPaid ? (
+            <div className="flex items-center gap-1.5">
+              <div className="w-24"><MoneyInput id={`same-for-${handNumber}`} label="Same amount for everyone" placeholder="Each" value={sameFor} onChange={setSameFor} size="sm" onEnter={() => sameFor && applyPaid(Object.fromEntries(dealtIn.map((id) => [id, sameFor])))} testId="input-paid-all" /></div>
+              <button className="btn btn-soft !px-2.5 !py-1.5 !text-xs" disabled={!sameFor} onClick={() => applyPaid(Object.fromEntries(dealtIn.map((id) => [id, sameFor])))} data-testid="button-paid-all">Everyone</button>
+              {Object.values(paid).some(Boolean) ? <button className="btn btn-ghost !px-2 !py-1.5 !text-xs" onClick={() => applyPaid({})}>Clear</button> : null}
+            </div>
+          ) : null}
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {dealtIn.map((id) => (
+            <div key={id} className="rounded-lg bg-[hsl(var(--secondary)/.45)] p-2">
+              <label className="mb-1 block truncate text-xs font-bold" htmlFor={`paid-${handNumber}-${id}`}>{nameOf(id)}</label>
+              {actionPaid ? (
+                <div className="mono-font px-1 py-1 text-sm">{inr(actionPaid[id] ?? 0)}</div>
+              ) : (
+                <MoneyInput id={`paid-${handNumber}-${id}`} placeholder="0" value={paid[id] ?? ""} onChange={(v) => applyPaid({ ...paid, [id]: v })} size="sm" testId={`input-paid-${id}`} />
+              )}
+            </div>
+          ))}
+        </div>
+        {paidTotal > 0 ? (
+          <p className="text-[11px] text-[hsl(var(--muted-foreground))]">
+            Total in: <b className="text-[hsl(var(--foreground))]">{inr(paidTotal)}</b>
+            {potTouched && hasAnyAmount && grossTotal !== paidTotal ? <span className="text-[hsl(var(--destructive))]"> · pot says {inr(grossTotal)}</span> : " · the pot below fills in by itself"}
+          </p>
+        ) : null}
+      </div>
+
       {/* Pots */}
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -269,6 +349,7 @@ export function PokerHandEditor({
             removable={index > 0}
             onUpdate={(updater) => updatePot(pot.id, updater)}
             onRemove={() => setPots((c) => c.filter((p) => p.id !== pot.id))}
+            onTouch={() => setPotTouched(true)}
             onToggleWinner={(playerId) => toggleWinner(pot, playerId)}
           />
         ))}
@@ -542,7 +623,9 @@ function PotEditor({
   onUpdate,
   onRemove,
   onToggleWinner,
+  onTouch,
 }: {
+  onTouch: () => void;
   pot: DraftPot;
   fee: number;
   playerIds: string[];
@@ -569,7 +652,7 @@ function PotEditor({
           data-testid={`input-pot-label-${pot.id}`}
         />
         <div className="w-32 sm:w-40">
-          <MoneyInput id={`pot-amount-${pot.id}`} label={`${pot.label} amount`} placeholder="Pot" value={pot.amount} onChange={(amount) => onUpdate((c) => ({ ...c, amount }))} testId={`input-pot-amount-${pot.id}`} size="sm" />
+          <MoneyInput id={`pot-amount-${pot.id}`} label={`${pot.label} amount`} placeholder="Pot" value={pot.amount} onChange={(amount) => { onTouch(); onUpdate((c) => ({ ...c, amount })); }} testId={`input-pot-amount-${pot.id}`} size="sm" />
         </div>
         {removable ? (
           <button className="rounded-md p-1.5 text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--destructive))]" onClick={onRemove} aria-label={`Remove ${pot.label}`} data-testid={`button-remove-pot-${pot.id}`}>

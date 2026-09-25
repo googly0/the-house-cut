@@ -7,7 +7,9 @@ import {
   sessionDetails,
   signedInr,
   totalBuyIns,
+  trackedResults,
   uid,
+  type TrackedResult,
   type HandRecord,
   type Player,
   type Session,
@@ -65,6 +67,15 @@ export function LiveTable({ session, onUpdate, onFinish, onToast }: { session: S
   const isReferenced = (playerId: string) =>
     session.hands.some((h) => h.dealerPlayerId === playerId || h.actions.some((a) => a.playerId === playerId) || h.pots.some((p) => p.awards.some((a) => a.playerId === playerId)));
 
+  const tracked = trackedResults(session);
+  const anyTracked = session.hands.some((h) => Object.keys(h.contributions).length);
+  const missingCashOut = session.players.filter((p) => p.cashOut === null && totalBuyIns(p) > 0);
+  const cashOutAtStacks = () => {
+    const before = session.players;
+    update((s) => ({ ...s, players: s.players.map((p) => (p.cashOut === null && totalBuyIns(p) > 0 ? { ...p, cashOut: Math.max(0, tracked.byPlayer[p.id]?.stack ?? 0) } : p)) }));
+    onToast("Cash-outs filled from tracked stacks.", () => update((s) => ({ ...s, players: before })));
+  };
+
   const inPlay = session.players.reduce((s, p) => s + totalBuyIns(p), 0);
   const perHour = (() => {
     const hours = (Date.now() - +new Date(session.startedAt)) / 3.6e6;
@@ -114,11 +125,23 @@ export function LiveTable({ session, onUpdate, onFinish, onToast }: { session: S
             </button>
             {showLedger ? (
               <div className="border-t border-[hsl(var(--border))] p-4 sm:p-5">
+                {anyTracked || tracked.untracked ? (
+                  <div className="mb-4 rounded-xl bg-[hsl(var(--secondary)/.55)] p-3 text-xs">
+                    <p className="text-[hsl(var(--muted-foreground))]">
+                      <b className="text-[hsl(var(--foreground))]">Live +/−</b> updates from each hand's "who put money in". Final results still come from cash-outs.
+                      {tracked.untracked ? <span className="text-[hsl(var(--destructive))]"> {tracked.untracked} hand{tracked.untracked === 1 ? " has" : "s have"} a winner but no one marked as paying — edit {tracked.untracked === 1 ? "it" : "them"} to count.</span> : null}
+                    </p>
+                    {anyTracked && missingCashOut.length ? (
+                      <button className="btn btn-soft mt-2 w-full !py-1.5 !text-xs" onClick={cashOutAtStacks} data-testid="button-cashout-tracked">Cash out {missingCashOut.length === session.players.length ? "everyone" : `${missingCashOut.length} left`} at tracked stacks</button>
+                    ) : null}
+                  </div>
+                ) : null}
                 {session.players.map((player) => (
                   <PlayerCard
                     key={player.id}
                     player={player}
                     defaultBuyIn={session.defaultBuyIn}
+                    tracked={anyTracked ? tracked.byPlayer[player.id] : undefined}
                     onUpdate={updatePlayer}
                     onRemove={!isReferenced(player.id) && totalBuyIns(player) === 0 ? () => removePlayer(player) : undefined}
                   />
@@ -189,9 +212,8 @@ function AddPlayer({ existing, onAdd }: { existing: string[]; onAdd: (name: stri
   );
 }
 
-function PlayerCard({ player, defaultBuyIn, onUpdate, onRemove }: { player: Player; defaultBuyIn: number | null; onUpdate: (playerId: string, fn: (p: Player) => Player) => void; onRemove?: () => void }) {
+function PlayerCard({ player, defaultBuyIn, tracked, onUpdate, onRemove }: { player: Player; defaultBuyIn: number | null; tracked?: TrackedResult; onUpdate: (playerId: string, fn: (p: Player) => Player) => void; onRemove?: () => void }) {
   const [buyIn, setBuyIn] = useState("");
-  const [cashOut, setCashOut] = useState(player.cashOut === null ? "" : String(player.cashOut));
   const [expanded, setExpanded] = useState(false);
   const net = playerNet(player);
   const inTotal = totalBuyIns(player);
@@ -202,7 +224,6 @@ function PlayerCard({ player, defaultBuyIn, onUpdate, onRemove }: { player: Play
     setBuyIn("");
   };
   const commitCashOut = (value: string) => {
-    setCashOut(value);
     onUpdate(player.id, (p) => ({ ...p, cashOut: value === "" ? null : Number(value) }));
   };
 
@@ -215,7 +236,7 @@ function PlayerCard({ player, defaultBuyIn, onUpdate, onRemove }: { player: Play
             <div className="flex items-center gap-1.5 truncate text-sm font-bold">{player.name}{player.sittingOut ? <span className="text-[10px] font-normal uppercase tracking-wide text-[hsl(var(--muted-foreground))]">sitting out</span> : null}</div>
             <div className="text-xs text-[hsl(var(--muted-foreground))]">
               {inTotal ? `In ${inr(inTotal)}${player.buyIns.length > 1 ? ` (${player.buyIns.length}×)` : ""}` : "No buy-in yet"}
-              {player.cashOut !== null ? ` · out ${inr(player.cashOut)}` : ""}
+              {player.cashOut !== null ? ` · out ${inr(player.cashOut)}` : tracked ? ` · stack ${inr(tracked.stack)}` : ""}
             </div>
           </div>
         </button>
@@ -224,9 +245,16 @@ function PlayerCard({ player, defaultBuyIn, onUpdate, onRemove }: { player: Play
             <Plus size={12} /> {inr(defaultBuyIn)}
           </button>
         ) : null}
-        <div className={`mono-font w-20 shrink-0 text-right text-sm ${net === null ? "text-[hsl(var(--muted-foreground))]" : net < 0 ? "text-[hsl(var(--destructive))]" : "text-[hsl(var(--success))]"}`}>
-          {net === null ? "—" : signedInr(net)}
-        </div>
+        {(() => {
+          const shown = net ?? tracked?.net ?? null;
+          const live = net === null && tracked !== undefined;
+          return (
+            <div className={`mono-font w-20 shrink-0 text-right text-sm ${shown === null ? "text-[hsl(var(--muted-foreground))]" : shown < 0 ? "text-[hsl(var(--destructive))]" : shown > 0 ? "text-[hsl(var(--success))]" : ""}`} data-testid={`text-net-${player.id}`}>
+              {shown === null ? "—" : signedInr(shown)}
+              {live ? <span className="block text-[9px] uppercase tracking-wider text-[hsl(var(--muted-foreground))]">live</span> : null}
+            </div>
+          );
+        })()}
       </div>
       {expanded ? (
         <div className="mt-3 rounded-xl bg-[hsl(var(--secondary)/.55)] p-3">
@@ -242,9 +270,14 @@ function PlayerCard({ player, defaultBuyIn, onUpdate, onRemove }: { player: Play
             <div className="flex-1"><MoneyInput id={`buyin-${player.id}`} label="Buy-in amount" placeholder={defaultBuyIn ? String(defaultBuyIn) : "Buy-in"} value={buyIn} onChange={setBuyIn} onEnter={() => addBuyIn(Number(buyIn || defaultBuyIn || 0))} size="sm" testId={`input-buyin-${player.id}`} /></div>
             <button className="btn btn-soft !px-3 !py-2 !text-xs" onClick={() => addBuyIn(Number(buyIn || defaultBuyIn || 0))} data-testid={`button-add-buyin-${player.id}`}><Plus size={13} /> Buy-in</button>
           </div>
+          {tracked && player.cashOut === null ? (
+            <button className="mt-2 w-full rounded-lg border border-dashed border-[hsl(var(--border))] py-1.5 text-xs font-bold text-[hsl(var(--accent))]" onClick={() => onUpdate(player.id, (p) => ({ ...p, cashOut: Math.max(0, tracked.stack) }))} data-testid={`button-cashout-stack-${player.id}`}>
+              Cash out at tracked stack {inr(Math.max(0, tracked.stack))}
+            </button>
+          ) : null}
           <div className="mt-2 flex items-center gap-2">
             <label className="eyebrow w-[74px] shrink-0" htmlFor={`cashout-${player.id}`}>Cash-out</label>
-            <div className="flex-1"><MoneyInput id={`cashout-${player.id}`} placeholder="Chips at the end" value={cashOut} onChange={commitCashOut} size="sm" testId={`input-cashout-${player.id}`} /></div>
+            <div className="flex-1"><MoneyInput id={`cashout-${player.id}`} placeholder="Chips at the end" value={player.cashOut === null ? "" : String(player.cashOut)} onChange={commitCashOut} size="sm" testId={`input-cashout-${player.id}`} /></div>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             <button className="btn btn-ghost !px-2 !py-1.5 !text-xs" onClick={() => onUpdate(player.id, (p) => ({ ...p, sittingOut: !p.sittingOut }))} data-testid={`button-sitout-${player.id}`}>

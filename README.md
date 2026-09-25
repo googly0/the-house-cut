@@ -11,7 +11,8 @@ Runs entirely in the browser. No account, no server, no database.
 | | |
 |---|---|
 | **Session setup** | Game (Hold'em, Omaha, Stud, other), blinds, ante, house fee per hand, standard buy-in, seat order, and a "same table as last time" button |
-| **Quick hand logging** | Tap the winner, type the pot, log it. Tap two or more names to split a pot. The odd rupee goes to the earliest seat. |
+| **Quick hand logging** | Enter what each player put in (or "Everyone ₹100"). The pot fills itself in. Tap the winner and log it. Tap two or more names to split a pot. The odd rupee goes to the earliest seat. |
+| **Live +/−** | Every hand moves money from the players who paid in to the winner(s). The ledger shows each player's running result and stack as the night goes on, and one tap cashes everyone out at their tracked stacks. |
 | **Betting actions** *(optional)* | Fold / check / call / bet / raise / all-in by street. Blinds are posted automatically from the dealer button, which moves each hand. Bad actions (checking into a bet, acting after folding) get flagged. |
 | **Auto side pots** | Worked out from the betting: main pot, side pots, who can win each one, and any uncalled bet returned |
 | **Community cards** | Two taps per card (rank, then suit). The same card can't be picked twice. |

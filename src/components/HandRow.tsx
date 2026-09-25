@@ -9,7 +9,12 @@ export function HandRow({ hand, players, onDelete, onEdit }: { hand: HandRecord;
   const name = (id: string) => players.find((p) => p.id === id)?.name ?? "Player";
   const winners = [...new Set(hand.pots.flatMap((p) => p.awards.map((a) => a.playerId)))];
   const pot = handPotTotal(hand);
-  const hasDetail = hand.actions.length > 0 || hand.pots.length > 1 || hand.dealerPlayerId;
+  const paidIds = Object.keys(hand.contributions);
+  const hasDetail = hand.actions.length > 0 || hand.pots.length > 1 || hand.dealerPlayerId || paidIds.length > 0;
+  const soleWinner = winners.length === 1 ? winners[0] : null;
+  const soleNet = soleWinner && paidIds.length
+    ? hand.pots.flatMap((p) => p.awards).filter((a) => a.playerId === soleWinner).reduce((s, a) => s + (a.amount ?? 0), 0) - (hand.contributions[soleWinner] ?? 0)
+    : null;
 
   return (
     <div className="group border-b border-[hsl(var(--border))] last:border-0" data-testid={`row-hand-${hand.id}`}>
@@ -19,6 +24,7 @@ export function HandRow({ hand, players, onDelete, onEdit }: { hand: HandRecord;
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
             <span className="font-bold">{winners.length ? winners.map(name).join(" & ") : "Winner not recorded"}</span>
             {winners.length > 1 ? <span className="rounded bg-[hsl(var(--accent)/.14)] px-1.5 text-[10px] font-bold uppercase tracking-wide text-[hsl(var(--accent))]">split</span> : null}
+            {soleNet !== null ? <span className="mono-font text-[hsl(var(--success))]">+{inr(soleNet)}</span> : null}
             {pot !== null ? <span className="text-[hsl(var(--muted-foreground))]">· {inr(pot)} pot</span> : null}
             {hand.fee === 0 ? <span className="text-[11px] text-[hsl(var(--muted-foreground))]">· no fee</span> : null}
           </div>
@@ -36,6 +42,7 @@ export function HandRow({ hand, players, onDelete, onEdit }: { hand: HandRecord;
       {open ? (
         <div className="space-y-2 px-5 pb-4 pl-[68px] text-xs text-[hsl(var(--muted-foreground))] sm:px-6 sm:pl-[68px]">
           {hand.dealerPlayerId ? <div>Button: <b className="text-[hsl(var(--foreground))]">{name(hand.dealerPlayerId)}</b></div> : null}
+          {paidIds.length ? <div>Paid in: {paidIds.map((id) => `${name(id)} ${inr(hand.contributions[id])}`).join(", ")}</div> : null}
           {hand.pots.map((p) => (
             <div key={p.id}>
               <b className="text-[hsl(var(--foreground))]">{p.label}</b> {p.amount !== null ? inr(p.amount) : ""} →{" "}
