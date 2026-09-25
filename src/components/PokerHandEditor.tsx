@@ -530,7 +530,7 @@ function ActionComposer({
     push(sizing, to);
   };
 
-  const minRaise = state.currentBet > 0 ? state.currentBet + (bigBlind ?? state.currentBet) : bigBlind ?? 0;
+  const minRaise = state.currentBet + (bigBlind ? Math.max(1, Math.round(bigBlind / 2)) : 10); // just a suggestion — any raise is allowed
 
   return (
     <div className="space-y-3">

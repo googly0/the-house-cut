@@ -120,9 +120,9 @@ function DealerModeInner({ session, onSave, onClose }: { session: Session; onSav
       if (to <= st.currentBet || out.some((o) => o.to === to)) return;
       out.push({ label, to });
     };
-    add("Min", st.minRaiseTo);
+    // House rule: raise by any amount. Quick "+₹X more" steps, then pot-sized.
+    for (const k of [1, 2, 5, 10]) add(`+${inr(step * k)}`, st.currentBet + step * k);
     add("½ pot", potSizedRaiseTo(st, actor, 0.5, step));
-    add("¾ pot", potSizedRaiseTo(st, actor, 0.75, step));
     add("Pot", potSizedRaiseTo(st, actor, 1, step));
     return out;
   }, [actor, st, actorAllInTo, step]);
@@ -275,16 +275,16 @@ function DealerModeInner({ session, onSave, onClose }: { session: Session; onSav
                   </button>
                 ) : null}
                 <button className={`dealer-chip ${showCustom ? "is-on" : ""}`} onClick={() => setShowCustom((s) => !s)} data-testid="button-dealer-custom">
-                  <span className="block text-[10px] opacity-70">{st.currentBet ? "Raise to" : "Bet"}</span>
+                  <span className="block text-[10px] opacity-70">{st.currentBet ? "Raise by" : "Bet"}</span>
                   <span>…</span>
                 </button>
               </div>
             ) : null}
             {showCustom ? (
               <div className="mt-2 flex gap-2">
-                <div className="flex-1"><MoneyInput id="dealer-custom" label="Amount" placeholder={String(st.minRaiseTo)} value={custom} onChange={setCustom} autoFocus onEnter={() => Number(custom) >= st.minRaiseTo && raiseTo(Number(custom))} testId="input-dealer-custom" /></div>
-                <button className="dealer-btn is-call !min-h-0 !px-4" disabled={!custom || Number(custom) < Math.min(st.minRaiseTo, actorAllInTo)} onClick={() => raiseTo(Number(custom))} data-testid="button-dealer-custom-go">
-                  {st.currentBet ? "Raise" : "Bet"} {custom ? inr(Number(custom)) : ""}
+                <div className="flex-1"><MoneyInput id="dealer-custom" label={st.currentBet ? "How much more" : "Bet amount"} placeholder={st.currentBet ? "How much more?" : "Bet"} value={custom} onChange={setCustom} autoFocus onEnter={() => Number(custom) > 0 && raiseTo(st.currentBet + Number(custom))} testId="input-dealer-custom" /></div>
+                <button className="dealer-btn is-call !min-h-0 !px-4" disabled={!custom || Number(custom) <= 0} onClick={() => raiseTo(st.currentBet + Number(custom))} data-testid="button-dealer-custom-go">
+                  {st.currentBet ? `Raise to ${inr(st.currentBet + (Number(custom) || 0))}` : `Bet ${custom ? inr(Number(custom)) : ""}`}
                 </button>
               </div>
             ) : null}

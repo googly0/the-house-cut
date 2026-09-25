@@ -724,7 +724,7 @@ export type DealerState = {
   /** Whose turn it is (null when the hand is over / at showdown). */
   toAct: string | null;
   currentBet: number;
-  /** Smallest legal raise-to (or bet) amount on this street. */
+  /** Smallest allowed raise-to (or bet). House rule: any amount above the current bet. */
   minRaiseTo: number;
   /** Chips each player has in on the current street. */
   commit: Record<string, number>;
@@ -753,7 +753,6 @@ export function dealerState(actions: HandAction[], ctx: HandContext): DealerStat
   const n = ids.length;
   const seat = (i: number) => ids[((i % n) + n) % n];
   const dIdx = Math.max(0, ctx.dealerId ? ids.indexOf(ctx.dealerId) : 0);
-  const bigBlind = ctx.bigBlind ?? 0;
 
   const contributions: Record<string, number> = {};
   for (const id of ids) contributions[id] = ctx.ante ?? 0;
@@ -762,7 +761,6 @@ export function dealerState(actions: HandAction[], ctx: HandContext): DealerStat
 
   let streetIdx = 0;
   let { commit, currentBet } = streetStart("Pre-flop", ctx);
-  let lastRaiseSize = bigBlind;
   let acted = new Set<string>();
   let lastAction: Record<string, HandAction> = {};
   const { bb } = blindSeats(ctx);
@@ -801,7 +799,6 @@ export function dealerState(actions: HandAction[], ctx: HandContext): DealerStat
       if (actors.length <= 1) { phase = "showdown"; runout = true; closed = true; streetIdx = STREETS.length - 1; break; }
       streetIdx++;
       currentBet = 0;
-      lastRaiseSize = bigBlind;
       acted = new Set();
       lastAction = {};
       pointer = dIdx + 1;
@@ -828,7 +825,6 @@ export function dealerState(actions: HandAction[], ctx: HandContext): DealerStat
         const to = Math.max(mine, a.amount ?? 0);
         commit[p] = to;
         if (to > currentBet) {
-          lastRaiseSize = Math.max(lastRaiseSize, to - currentBet);
           currentBet = to;
           acted = new Set();
         }
@@ -861,7 +857,7 @@ export function dealerState(actions: HandAction[], ctx: HandContext): DealerStat
     street: STREETS[streetIdx],
     toAct: phase === "betting" ? toAct : null,
     currentBet,
-    minRaiseTo: currentBet === 0 ? Math.max(1, bigBlind) : currentBet + Math.max(1, lastRaiseSize),
+    minRaiseTo: currentBet + 1,
     commit: closed ? {} : commit,
     contributions: totals,
     folded,

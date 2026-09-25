@@ -205,7 +205,7 @@ describe("dealer mode turn order", () => {
   it("re-opens action after a raise", () => {
     const { st } = go([["d", "Call"], ["a", "Raise", 60], ["b", "Fold"], ["c", "Call"]]);
     expect(st.toAct).toBe("d");
-    expect(st.minRaiseTo).toBe(100);
+    expect(st.minRaiseTo).toBe(61); // house rule: any raise above the current bet
   });
 
   it("ends the hand when everyone folds to the big blind (a walk)", () => {
@@ -238,6 +238,14 @@ describe("dealer mode turn order", () => {
     const { st } = go(acts);
     expect(st.phase).toBe("showdown");
     expect(st.street).toBe("River");
+  });
+
+  it("allows small re-raises and re-opens the action", () => {
+    // d raises to 50, a re-raises just ₹10 more, everyone else must respond again
+    const { st } = go([["d", "Raise", 50], ["a", "Raise", 60], ["b", "Fold"], ["c", "Call"], ["d", "Raise", 70]]);
+    expect(st.street).toBe("Pre-flop");
+    expect(st.toAct).toBe("a");
+    expect(st.currentBet).toBe(70);
   });
 
   it("sizes a pot raise and rounds to the chip step", () => {
