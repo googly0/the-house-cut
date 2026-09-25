@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en-IN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>The House Cut · Poker night ledger</title>
+    <meta name="description" content="Track buy-ins, hands, side pots and settle-up for home poker games." />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#f3eee4" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="House Cut" />
+    <meta property="og:title" content="The House Cut" />
+    <meta property="og:description" content="A private ledger for home poker nights." />
+    <meta property="og:type" content="website" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <script>
+      // Apply the saved/system theme before paint to avoid a white flash at night.
+      try {
+        var t = localStorage.getItem("poker-session-tracker/theme");
+        if (t === "dark" || (t !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches)) document.documentElement.classList.add("dark");
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
