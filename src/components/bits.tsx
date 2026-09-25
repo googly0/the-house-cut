@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { Check, Trash2 } from "lucide-react";
 import { cardLabel, isRedCard } from "../poker";
 
@@ -88,10 +89,11 @@ export function Modal({ children, onClose, labelledBy, wide = false }: { childre
       previous?.focus?.();
     };
   }, [onClose]);
-  return (
+  return createPortal(
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby={labelledBy} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div ref={ref} tabIndex={-1} className={`modal-card outline-none ${wide ? "!w-[min(760px,100%)]" : ""}`}>{children}</div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

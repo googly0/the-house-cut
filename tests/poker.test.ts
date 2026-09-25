@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   blindSeats,
+  dealerState,
+  potSizedRaiseTo,
   buildPots,
   normalizeSessions,
   parseBoard,
@@ -103,6 +105,7 @@ describe("settlement", () => {
     smallBlind: null,
     bigBlind: null,
     ante: null,
+    chipSet: null,
     players: [
       { id: "a", name: "A", buyIns: [500], cashOut: 1700, sittingOut: false },
       { id: "b", name: "B", buyIns: [500, 500], cashOut: 0, sittingOut: false },
@@ -146,7 +149,7 @@ describe("live tracking", () => {
   it("moves money from payers to the winner, net of the house fee", () => {
     const s: Session = {
       id: "t", version: 2, startedAt: new Date().toISOString(), endedAt: null, feePerHand: 20, defaultBuyIn: 500,
-      gameVariant: "Texas Hold'em", smallBlind: null, bigBlind: null, ante: null,
+      gameVariant: "Texas Hold'em", smallBlind: null, bigBlind: null, ante: null, chipSet: null,
       players: ["a", "b", "c"].map((id) => ({ id, name: id.toUpperCase(), buyIns: [500], cashOut: null, sittingOut: false })),
       hands: [
         // a, b, c each put in 100; pot 300; fee 20; a wins 280
@@ -167,5 +170,78 @@ describe("live tracking", () => {
     // stacks + fees of tracked hands == buy-ins
     const stacks = Object.values(byPlayer).reduce((x, r) => x + r.stack, 0);
     expect(stacks + 20).toBe(1500);
+  });
+});
+
+describe("dealer mode turn order", () => {
+  const bp = buildPots;
+  const ring: HandContext = { playerIds: ["a", "b", "c", "d"], dealerId: "a", smallBlind: 10, bigBlind: 20, ante: null };
+  const go = (acts: [string, HandAction["action"], number?][], c: HandContext = ring) => {
+    const list: HandAction[] = [];
+    for (const [p, action, amount] of acts) {
+      const st = dealerState(list, c);
+      list.push({ id: `x${list.length}`, street: st.actionStreet, playerId: p, action, amount: amount ?? (action === "Call" ? st.currentBet : null) });
+    }
+    return { st: dealerState(list, c), list };
+  };
+
+  it("first to act pre-flop is left of the big blind", () => {
+    expect(dealerState([], ring).toAct).toBe("d");
+  });
+
+  it("gives the big blind the option when everyone limps", () => {
+    const { st } = go([["d", "Call"], ["a", "Call"], ["b", "Call"]]);
+    expect(st.street).toBe("Pre-flop");
+    expect(st.toAct).toBe("c");
+  });
+
+  it("moves to the flop after BB checks, first to act is left of the button", () => {
+    const { st } = go([["d", "Call"], ["a", "Call"], ["b", "Call"], ["c", "Check"]]);
+    expect(st.street).toBe("Flop");
+    expect(st.toAct).toBe("b");
+    expect(st.potTotal).toBe(80);
+  });
+
+  it("re-opens action after a raise", () => {
+    const { st } = go([["d", "Call"], ["a", "Raise", 60], ["b", "Fold"], ["c", "Call"]]);
+    expect(st.toAct).toBe("d");
+    expect(st.minRaiseTo).toBe(100);
+  });
+
+  it("ends the hand when everyone folds to the big blind (a walk)", () => {
+    const { st } = go([["d", "Fold"], ["a", "Fold"], ["b", "Fold"]]);
+    expect(st.phase).toBe("folded");
+    expect(st.winnerByFold).toBe("c");
+    const pots = bp(st.contributions, st.folded);
+    expect(pots.pots[0].amount).toBe(20);
+    expect(pots.returned).toEqual({ playerId: "c", amount: 10 });
+  });
+
+  it("heads-up: button posts SB and acts first pre-flop, last after", () => {
+    const hu: HandContext = { ...ring, playerIds: ["a", "b"] };
+    expect(dealerState([], hu).toAct).toBe("a");
+    const { st } = go([["a", "Call"], ["b", "Check"]], hu);
+    expect(st.street).toBe("Flop");
+    expect(st.toAct).toBe("b");
+  });
+
+  it("runs the board out when an all-in is called", () => {
+    const { st } = go([["d", "All-in", 300], ["a", "Fold"], ["b", "Fold"], ["c", "Call"]]);
+    expect(st.phase).toBe("showdown");
+    expect(st.runout).toBe(true);
+    expect(st.contributions).toEqual({ a: 0, b: 10, c: 300, d: 300 });
+  });
+
+  it("goes to showdown after river betting closes", () => {
+    const acts: [string, HandAction["action"], number?][] = [["d", "Call"], ["a", "Fold"], ["b", "Fold"], ["c", "Check"]];
+    for (let i = 0; i < 3; i++) acts.push(["c", "Check"], ["d", "Check"]);
+    const { st } = go(acts);
+    expect(st.phase).toBe("showdown");
+    expect(st.street).toBe("River");
+  });
+
+  it("sizes a pot raise and rounds to the chip step", () => {
+    const st = dealerState([], ring); // pot 30, facing 20
+    expect(potSizedRaiseTo(st, "d", 1, 10)).toBe(70); // 20 + (30 + 20)
   });
 });

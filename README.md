@@ -11,18 +11,30 @@ Runs entirely in the browser. No account, no server, no database.
 | | |
 |---|---|
 | **Session setup** | Game (Hold'em, Omaha, Stud, other), blinds, ante, house fee per hand, standard buy-in, seat order, and a "same table as last time" button |
+| **Dealer mode** | A full-screen guided hand for the dealer's phone. Blinds post automatically and the app always knows whose turn it is. The acting player gets big Fold / Check / Call ₹X buttons, plus bet sizes (min, ½ pot, ¾ pot, pot, all-in, custom). It deals the next street when betting closes, ends the hand when everyone folds, and runs out the board on an all-in. At showdown you tap the winner(s): side pots, the fee and uncalled bets are handled for you, and the button moves on. Also: undo, the screen stays awake, and players with no chips are skipped. |
+| **Chip counter** | Set your chip colours once (for example white ₹10, black ₹500). At cash-out, tap +/− per colour to get the stack's rupee value. |
+| **Quick-log shortcuts** | "Same pot as last hand" and a one-tap "Walk" (folded to the big blind, no fee). |
+| **Phone app** | Installable to the home screen (Android: Install button; iPhone: Share → Add to Home Screen). Opens full-screen and works offline. |
 | **Quick hand logging** | Enter what each player put in (or "Everyone ₹100"). The pot fills itself in. Tap the winner and log it. Tap two or more names to split a pot. The odd rupee goes to the earliest seat. |
 | **Live +/−** | Every hand moves money from the players who paid in to the winner(s). The ledger shows each player's running result and stack as the night goes on, and one tap cashes everyone out at their tracked stacks. |
 | **Betting actions** *(optional)* | Fold / check / call / bet / raise / all-in by street. Blinds are posted automatically from the dealer button, which moves each hand. Bad actions (checking into a bet, acting after folding) get flagged. |
 | **Auto side pots** | Worked out from the betting: main pot, side pots, who can win each one, and any uncalled bet returned |
 | **Community cards** | Two taps per card (rank, then suit). The same card can't be picked twice. |
-| **House fee** | Set per session and stored per hand. Turn it off for a misdeal or a walk. Taken out of the main pot payout. |
+| **House fee** | Set per session and stored per hand. Taken out of the main pot payout. "No flop, no drop": hands won before the flop default to no fee. |
 | **Player ledger** | One-tap standard buy-in, custom rebuys, cash-out, sit out, late joiners |
 | **Chip check** | `buy-ins − cash-outs − fees = 0`. Shows a warning before you finish if it doesn't. |
 | **Settle up** | Fewest transfers needed ("Ravi → Kiran ₹300"), plus copy or share to WhatsApp |
 | **History & stats** | Reopen or delete past sessions, see the full hand log, and lifetime net per player |
 | **Backup** | Export or import all sessions as JSON |
 | **Other** | Light / dark / system theme, phone-first layout, undo for deletes |
+
+## Use it on your phone
+
+1. Open the deployed URL in **Chrome (Android)** or **Safari (iPhone)**.
+2. **Android:** tap **Install** on the banner (or ⋮ → *Install app*). **iPhone:** tap **Share → Add to Home Screen**.
+3. Launch it from the home-screen icon. It opens full-screen and keeps working with no signal once it's been opened online at least once.
+
+Data lives on the phone you use, so run the ledger from one device, usually the dealer's.
 
 ## Where your data lives
 
@@ -57,7 +69,7 @@ It's a static Vite app. `vercel.json` sets the build and output, SPA rewrites, l
 ```
 src/
   poker.ts                 All game and money logic, pure TypeScript with no React:
-                           betting replay, side pots, splits, reconciliation,
+                           dealer turn order, betting replay, side pots, splits, reconciliation,
                            settle-up, lifetime stats, data migration
   storage.ts               localStorage persistence, cross-tab sync, backup, theme
   App.tsx                  App shell: navigation, toasts, confirmations
@@ -67,13 +79,20 @@ src/
     HistoryView.tsx        Past sessions, detail, reopen, export/import
     StatsView.tsx          Lifetime leaderboard
   components/
+    DealerMode.tsx         Full-screen guided hand (turn order, bet presets, showdown)
+    ChipCounter.tsx        Count a stack by chip colour
+    InstallHint.tsx        "Add to home screen" prompt
     PokerHandEditor.tsx    Pots, winners, splits, board, betting actions
     CardPicker.tsx         Rank → suit card entry
     Settlement.tsx         Chip check + settle-up + share
     HandRow.tsx            Hand log row with expandable detail
     bits.tsx               Shared UI (money input, modal, stat card, …)
+public/
+  manifest.webmanifest     PWA manifest (name, icons, standalone display)
+  sw.js                    Offline service worker (network-first pages, cached assets)
+  icons/                   App icons incl. maskable + Apple touch icon
 tests/
-  poker.test.ts            Engine tests
+  poker.test.ts            Engine tests (turn order, side pots, settlement, migration)
 ```
 
 ## Conventions

@@ -135,6 +135,22 @@ export function PokerHandEditor({
   const paidMap: Record<string, number> = actionPaid ?? Object.fromEntries(dealtIn.map((id) => [id, Number(paid[id]) || 0]));
   const paidTotal = Object.values(paidMap).reduce((a, b) => a + b, 0);
 
+  const lastHand = !initial ? session.hands[session.hands.length - 1] : undefined;
+  const lastPaid = lastHand && Object.keys(lastHand.contributions).length ? lastHand.contributions : null;
+  const canWalk = !initial && sb && bb && session.smallBlind && session.bigBlind;
+
+  const logWalk = () => {
+    if (!sb || !bb || !session.smallBlind) return;
+    const amt = session.smallBlind;
+    onSave({
+      id: uid("hand"), number: handNumber, loggedAt: new Date().toISOString(), fee: 0,
+      note: "Walk — folded to the big blind", dealerPlayerId: dealerId || null, board: [], actions: [],
+      pots: [{ id: uid("pot"), label: "Main pot", amount: amt * 2, eligibleIds: [], awards: [{ playerId: bb, amount: amt * 2 }] }],
+      contributions: { [sb]: amt, [bb]: amt },
+    });
+    setDealerId(nextDealerIdAfter(dealerId));
+  };
+
   const applyPaid = (next: Record<string, string>) => {
     setPaid(next);
     setError("");
@@ -288,6 +304,21 @@ export function PokerHandEditor({
         <p className="-mt-2 text-[11px] text-[hsl(var(--muted-foreground))]">
           Blinds this hand: <b>{nameOf(sb)}</b> {inr(session.smallBlind ?? 0)} · <b>{nameOf(bb)}</b> {inr(session.bigBlind ?? 0)}
         </p>
+      ) : null}
+
+      {lastPaid || canWalk ? (
+        <div className="flex flex-wrap gap-2" data-testid="quick-shortcuts">
+          {lastPaid ? (
+            <button className="chip-btn" onClick={() => applyPaid(Object.fromEntries(Object.entries(lastPaid).filter(([id]) => dealtIn.includes(id)).map(([id, v]) => [id, String(v)])))} data-testid="button-same-as-last">
+              ↺ Same pot as last hand
+            </button>
+          ) : null}
+          {canWalk ? (
+            <button className="chip-btn" onClick={logWalk} title="Everyone folded to the big blind — no fee" data-testid="button-log-walk">
+              Walk to {nameOf(bb!)} · {inr(session.smallBlind!)}
+            </button>
+          ) : null}
+        </div>
       ) : null}
 
       {/* Money in */}

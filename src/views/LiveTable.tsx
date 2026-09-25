@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CalendarDays, Check, ChevronDown, ChevronUp, Clock3, Coins, Hand, IndianRupee, Pencil, Plus, Trash2, UserMinus, UserPlus, Users, X } from "lucide-react";
+import { Coins as CoinsIcon, Play, CalendarDays, Check, ChevronDown, ChevronUp, Clock3, Coins, Hand, IndianRupee, Pencil, Plus, Trash2, UserMinus, UserPlus, Users, X } from "lucide-react";
 import {
   hostTotal,
   inr,
@@ -18,11 +18,15 @@ import { EmptyState, Modal, MoneyInput, PlayerDot, StatCard, formatDate, formatD
 import { PokerHandEditor } from "../components/PokerHandEditor";
 import { HandRow } from "../components/HandRow";
 import { ReconcileBar, SettleUp } from "../components/Settlement";
+import { DealerMode } from "../components/DealerMode";
+import { ChipCounter } from "../components/ChipCounter";
 
 type Updater = (id: string, updater: (session: Session) => Session) => void;
 
 export function LiveTable({ session, onUpdate, onFinish, onToast }: { session: Session; onUpdate: Updater; onFinish: () => void; onToast: (message: string, undo?: () => void) => void }) {
   const [editing, setEditing] = useState<HandRecord | null>(null);
+  const [dealing, setDealing] = useState(false);
+  const [counting, setCounting] = useState<Player | null>(null);
   const [showLedger, setShowLedger] = useState(true);
   const update = (fn: (s: Session) => Session) => onUpdate(session.id, fn);
 
@@ -109,6 +113,16 @@ export function LiveTable({ session, onUpdate, onFinish, onToast }: { session: S
             <div><div className="eyebrow">Log the next hand</div><h2 className="mt-1 text-lg font-bold">Hand #{session.hands.length + 1}</h2></div>
           </div>
           <div className="p-5 sm:p-6">
+            {session.players.filter((p) => !p.sittingOut).length >= 2 ? (
+              <button className="deal-cta mb-5" onClick={() => setDealing(true)} data-testid="button-open-dealer">
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white/15"><Play size={20} /></span>
+                <span className="min-w-0 flex-1 text-left">
+                  <span className="block text-base font-bold">Deal a hand</span>
+                  <span className="block text-xs opacity-80">Dealer mode: tap each player's move and the pot, side pots and payouts fill in themselves.</span>
+                </span>
+              </button>
+            ) : null}
+            <div className="mb-4 flex items-center gap-3 text-[11px] uppercase tracking-[.14em] text-[hsl(var(--muted-foreground))]"><span className="h-px flex-1 bg-[hsl(var(--border))]" />or log it after the hand<span className="h-px flex-1 bg-[hsl(var(--border))]" /></div>
             {session.players.some((p) => !p.sittingOut) ? (
               <PokerHandEditor session={session} handNumber={session.hands.length + 1} onSave={addHand} />
             ) : (
@@ -143,6 +157,7 @@ export function LiveTable({ session, onUpdate, onFinish, onToast }: { session: S
                     defaultBuyIn={session.defaultBuyIn}
                     tracked={anyTracked ? tracked.byPlayer[player.id] : undefined}
                     onUpdate={updatePlayer}
+                    onCount={() => setCounting(player)}
                     onRemove={!isReferenced(player.id) && totalBuyIns(player) === 0 ? () => removePlayer(player) : undefined}
                   />
                 ))}
@@ -169,6 +184,18 @@ export function LiveTable({ session, onUpdate, onFinish, onToast }: { session: S
           <EmptyState icon={<Hand size={19} />} title="No hands logged yet" body="Tap the winner, type the pot, log it. Everything else is optional." />
         )}
       </section>
+
+      {dealing ? <DealerMode session={session} onSave={addHand} onClose={() => setDealing(false)} /> : null}
+
+      {counting ? (
+        <ChipCounter
+          playerName={counting.name}
+          chips={session.chipSet}
+          onSaveChips={(chips) => update((s) => ({ ...s, chipSet: chips }))}
+          onApply={(total) => { updatePlayer(counting.id, (p) => ({ ...p, cashOut: total })); setCounting(null); onToast(`${counting.name} cashed out ${inr(total)}.`); }}
+          onClose={() => setCounting(null)}
+        />
+      ) : null}
 
       {editing ? (
         <Modal onClose={() => setEditing(null)} labelledBy="edit-hand-title" wide>
@@ -212,7 +239,7 @@ function AddPlayer({ existing, onAdd }: { existing: string[]; onAdd: (name: stri
   );
 }
 
-function PlayerCard({ player, defaultBuyIn, tracked, onUpdate, onRemove }: { player: Player; defaultBuyIn: number | null; tracked?: TrackedResult; onUpdate: (playerId: string, fn: (p: Player) => Player) => void; onRemove?: () => void }) {
+function PlayerCard({ player, defaultBuyIn, tracked, onUpdate, onRemove, onCount }: { player: Player; defaultBuyIn: number | null; tracked?: TrackedResult; onUpdate: (playerId: string, fn: (p: Player) => Player) => void; onRemove?: () => void; onCount: () => void }) {
   const [buyIn, setBuyIn] = useState("");
   const [expanded, setExpanded] = useState(false);
   const net = playerNet(player);
@@ -278,6 +305,7 @@ function PlayerCard({ player, defaultBuyIn, tracked, onUpdate, onRemove }: { pla
           <div className="mt-2 flex items-center gap-2">
             <label className="eyebrow w-[74px] shrink-0" htmlFor={`cashout-${player.id}`}>Cash-out</label>
             <div className="flex-1"><MoneyInput id={`cashout-${player.id}`} placeholder="Chips at the end" value={player.cashOut === null ? "" : String(player.cashOut)} onChange={commitCashOut} size="sm" testId={`input-cashout-${player.id}`} /></div>
+            <button className="btn btn-soft !px-2.5 !py-2 !text-xs" onClick={onCount} aria-label={`Count ${player.name}'s chips`} data-testid={`button-count-chips-${player.id}`}><CoinsIcon size={13} /> Count</button>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             <button className="btn btn-ghost !px-2 !py-1.5 !text-xs" onClick={() => onUpdate(player.id, (p) => ({ ...p, sittingOut: !p.sittingOut }))} data-testid={`button-sitout-${player.id}`}>

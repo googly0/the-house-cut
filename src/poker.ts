@@ -84,6 +84,8 @@ export type Session = {
   ante: number | null;
   hands: HandRecord[];
   players: Player[];
+  /** Chip colours → rupee values, used by the chip counter. */
+  chipSet: ChipDenom[] | null;
 };
 
 export type SessionSetup = Pick<
@@ -673,6 +675,15 @@ function normalizeContributions(value: unknown): Record<string, number> {
   return out;
 }
 
+function normalizeChips(value: unknown): ChipDenom[] | null {
+  if (!Array.isArray(value)) return null;
+  const chips = value
+    .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
+    .map((c) => ({ id: str(c.id) ?? uid("chip"), name: str(c.name) ?? "Chip", color: str(c.color) ?? "#888888", value: num(c.value) ?? 0 }))
+    .filter((c) => c.value > 0);
+  return chips.length ? chips : null;
+}
+
 export function normalizeSessions(value: unknown): Session[] {
   if (!Array.isArray(value)) return [];
   const sessions = value
@@ -690,6 +701,7 @@ export function normalizeSessions(value: unknown): Session[] {
         smallBlind: num(session.smallBlind),
         bigBlind: num(session.bigBlind),
         ante: num(session.ante),
+        chipSet: normalizeChips(session.chipSet),
         players: Array.isArray(session.players) ? (session.players as Record<string, unknown>[]).map(normalizePlayer) : [],
         hands: Array.isArray(session.hands)
           ? (session.hands as Record<string, unknown>[]).map((h, i) => normalizeHand(h, i, feePerHand))
@@ -700,4 +712,188 @@ export function normalizeSessions(value: unknown): Session[] {
   const live = sessions.filter((s) => !s.endedAt).sort((a, b) => +new Date(b.startedAt) - +new Date(a.startedAt));
   for (const extra of live.slice(1)) extra.endedAt = extra.startedAt;
   return sessions;
+}
+
+/* ── dealer mode: guided turn order ──────────────────────────────────────── */
+
+export type DealerPhase = "betting" | "showdown" | "folded";
+
+export type DealerState = {
+  phase: DealerPhase;
+  street: Street;
+  /** Whose turn it is (null when the hand is over / at showdown). */
+  toAct: string | null;
+  currentBet: number;
+  /** Smallest legal raise-to (or bet) amount on this street. */
+  minRaiseTo: number;
+  /** Chips each player has in on the current street. */
+  commit: Record<string, number>;
+  /** Total each player has in the hand so far (antes + all streets). */
+  contributions: Record<string, number>;
+  folded: Set<string>;
+  allIn: Set<string>;
+  /** Last action each player took on the current street (for seat badges). */
+  lastAction: Record<string, HandAction>;
+  potTotal: number;
+  /** Set when everyone else folded. */
+  winnerByFold: string | null;
+  /** True when betting stopped early because at most one player can still bet. */
+  runout: boolean;
+  /** The street each generated action should be stamped with. */
+  actionStreet: Street;
+};
+
+/**
+ * Walks the hand in seat order the way a dealer would. Knows who acts first
+ * (left of the big blind pre-flop, left of the button after), when a betting
+ * round is closed, when to deal the next street, and when the hand is over.
+ */
+export function dealerState(actions: HandAction[], ctx: HandContext): DealerState {
+  const ids = ctx.playerIds;
+  const n = ids.length;
+  const seat = (i: number) => ids[((i % n) + n) % n];
+  const dIdx = Math.max(0, ctx.dealerId ? ids.indexOf(ctx.dealerId) : 0);
+  const bigBlind = ctx.bigBlind ?? 0;
+
+  const contributions: Record<string, number> = {};
+  for (const id of ids) contributions[id] = ctx.ante ?? 0;
+  const folded = new Set<string>();
+  const allIn = new Set<string>();
+
+  let streetIdx = 0;
+  let { commit, currentBet } = streetStart("Pre-flop", ctx);
+  let lastRaiseSize = bigBlind;
+  let acted = new Set<string>();
+  let lastAction: Record<string, HandAction> = {};
+  const { bb } = blindSeats(ctx);
+  let pointer = bb ? ids.indexOf(bb) + 1 : dIdx + 1;
+  let phase = "betting" as DealerPhase;
+  let runout = false;
+  let closed = false as boolean;
+
+  const canAct = (id: string) => !folded.has(id) && !allIn.has(id);
+  const live = () => ids.filter((id) => !folded.has(id));
+
+  const roundDone = () => {
+    if (live().length <= 1) return true;
+    const actors = ids.filter(canAct);
+    if (actors.length === 0) return true;
+    if (actors.every((id) => acted.has(id) && (commit[id] ?? 0) === currentBet)) return true;
+    // One player left who can bet, and they've matched everyone: nothing to bet against.
+    if (actors.length === 1 && (commit[actors[0]] ?? 0) >= currentBet && ids.every((id) => id === actors[0] || folded.has(id) || allIn.has(id))) {
+      return acted.has(actors[0]) || (commit[actors[0]] ?? 0) >= Math.max(0, ...ids.filter((id) => id !== actors[0]).map((id) => commit[id] ?? 0));
+    }
+    return false;
+  };
+
+  const closeStreet = () => {
+    for (const [id, amount] of Object.entries(commit)) contributions[id] = (contributions[id] ?? 0) + amount;
+    commit = {};
+  };
+
+  const settle = () => {
+    // Called after every action: resolve round/street/hand transitions.
+    while (phase === "betting" && roundDone()) {
+      closeStreet();
+      if (live().length <= 1) { phase = "folded"; closed = true; break; }
+      const actors = ids.filter(canAct);
+      if (streetIdx === STREETS.length - 1) { phase = "showdown"; closed = true; break; }
+      if (actors.length <= 1) { phase = "showdown"; runout = true; closed = true; streetIdx = STREETS.length - 1; break; }
+      streetIdx++;
+      currentBet = 0;
+      lastRaiseSize = bigBlind;
+      acted = new Set();
+      lastAction = {};
+      pointer = dIdx + 1;
+    }
+  };
+
+  for (const a of actions) {
+    if (phase !== "betting") break;
+    const p = a.playerId;
+    if (!ids.includes(p) || !canAct(p)) continue;
+    const mine = commit[p] ?? 0;
+    switch (a.action) {
+      case "Fold":
+        folded.add(p);
+        break;
+      case "Check":
+        break;
+      case "Call":
+        commit[p] = Math.max(mine, a.amount ?? currentBet);
+        break;
+      case "Bet":
+      case "Raise":
+      case "All-in": {
+        const to = Math.max(mine, a.amount ?? 0);
+        commit[p] = to;
+        if (to > currentBet) {
+          lastRaiseSize = Math.max(lastRaiseSize, to - currentBet);
+          currentBet = to;
+          acted = new Set();
+        }
+        if (a.action === "All-in") allIn.add(p);
+        break;
+      }
+    }
+    acted.add(p);
+    lastAction[p] = a;
+    pointer = ids.indexOf(p) + 1;
+    settle();
+  }
+
+  let toAct: string | null = null;
+  if (phase === "betting") {
+    for (let k = 0; k < n; k++) {
+      const id = seat(pointer + k);
+      if (canAct(id) && (!acted.has(id) || (commit[id] ?? 0) < currentBet)) { toAct = id; break; }
+    }
+    if (!toAct) { settle(); }
+  }
+
+  const totals = { ...contributions };
+  if (!closed) for (const [id, amount] of Object.entries(commit)) totals[id] = (totals[id] ?? 0) + amount;
+  const potTotal = Object.values(totals).reduce((a, b) => a + b, 0);
+  const liveIds = live();
+
+  return {
+    phase,
+    street: STREETS[streetIdx],
+    toAct: phase === "betting" ? toAct : null,
+    currentBet,
+    minRaiseTo: currentBet === 0 ? Math.max(1, bigBlind) : currentBet + Math.max(1, lastRaiseSize),
+    commit: closed ? {} : commit,
+    contributions: totals,
+    folded,
+    allIn,
+    lastAction,
+    potTotal,
+    winnerByFold: phase === "folded" && liveIds.length === 1 ? liveIds[0] : null,
+    runout,
+    actionStreet: STREETS[streetIdx],
+  };
+}
+
+/** Pot-relative raise-to amount, rounded to the smallest sensible chip. */
+export function potSizedRaiseTo(state: DealerState, playerId: string, fraction: number, step: number) {
+  const toCall = Math.max(0, state.currentBet - (state.commit[playerId] ?? 0));
+  const raiseBy = (state.potTotal + toCall) * fraction;
+  const raw = state.currentBet + raiseBy;
+  const rounded = Math.round(raw / step) * step;
+  return Math.max(state.minRaiseTo, rounded);
+}
+
+/* ── chips ───────────────────────────────────────────────────────────────── */
+
+export type ChipDenom = { id: string; name: string; color: string; value: number };
+
+export const DEFAULT_CHIPS: ChipDenom[] = [
+  { id: "chip-white", name: "White", color: "#f1ede4", value: 10 },
+  { id: "chip-red", name: "Red", color: "#c0392b", value: 50 },
+  { id: "chip-green", name: "Green", color: "#2f7d52", value: 100 },
+  { id: "chip-black", name: "Black", color: "#222222", value: 500 },
+];
+
+export function chipTotal(chips: ChipDenom[], counts: Record<string, number>) {
+  return chips.reduce((sum, c) => sum + c.value * (counts[c.id] ?? 0), 0);
 }

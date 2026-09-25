@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import { AlertTriangle, BarChart3, Check, Hand, History, Monitor, Moon, Sun, Undo2 } from "lucide-react";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { ConfirmModal } from "./components/bits";
+import { InstallHint } from "./components/InstallHint";
 import { ReconcileBar } from "./components/Settlement";
 import { hostTotal, inr, reconcile, uid, SCHEMA_VERSION, type Session, type SessionSetup } from "./poker";
 import { exportBackup, mergeSessions, parseBackup, useSessions, useTheme } from "./storage";
@@ -66,6 +67,7 @@ function Home() {
       startedAt: started.toISOString(),
       endedAt: null,
       ...setup,
+      chipSet: pastSessions[0]?.chipSet ?? null,
       hands: [],
       players: names.map((name) => ({ id: uid("player"), name: name.trim(), buyIns: setup.defaultBuyIn ? [setup.defaultBuyIn] : [], cashOut: null, sittingOut: false })),
     };
@@ -152,6 +154,8 @@ function Home() {
           </div>
         </div>
       </header>
+
+      <InstallHint />
 
       {saveError ? (
         <div className="content-wrap mt-4 flex items-start gap-2 rounded-xl bg-[hsl(var(--destructive)/.1)] p-3 text-sm text-[hsl(var(--destructive))]" role="alert">
